@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Splinterlands Tournament Viewer</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="control-panel">
+        <div class="brand-block">
+          <div class="brand-mark">SM</div>
+          <div>
+            <h1>Splinterlands Tournament Viewer</h1>
+            <p>Stream bracket board</p>
+          </div>
+        </div>
+
+        <div class="filter-toggles" aria-label="Tournament status filters">
+          <label class="toggle"><input class="status-filter" type="checkbox" value="completed" checked><span>Completed</span></label>
+          <label class="toggle"><input class="status-filter" type="checkbox" value="in_progress" checked><span>In Progress</span></label>
+          <label class="toggle"><input class="status-filter" type="checkbox" value="upcoming" checked><span>Upcoming</span></label>
+        </div>
+
+        <label class="field"><span>Format</span><select id="formatFilter"><option value="any">Any format</option></select></label>
+        <label class="field"><span>Tournament</span><select id="tournamentSelect"></select></label>
+
+        <div class="load-row">
+          <label class="field inline"><span>Tournament ID</span><input id="tournamentIdInput" type="text" spellcheck="false" placeholder="Paste Splinterlands tournament id"></label>
+          <button id="loadTournamentButton" type="button">Load</button>
+        </div>
+        <button id="refreshListsButton" type="button">Refresh API Lists</button>
+
+        <div class="segmented" role="group" aria-label="View mode">
+          <button class="is-active" type="button" data-view="bracket">Bracket</button>
+          <button type="button" data-view="standings">Standings</button>
+          <button type="button" data-view="host">Host</button>
+        </div>
+
+        <div class="reveal-grid">
+          <button id="revealNamesButton" type="button">Reveal Names</button>
+          <button id="revealScoresButton" type="button">Reveal Scores</button>
+          <button id="revealWinnersButton" type="button">Reveal Winners</button>
+          <button id="revealAllButton" type="button">Reveal All</button>
+          <button id="hideAllButton" type="button">Hide All</button>
+        </div>
+
+        <div class="field-row">
+          <label class="field"><span>Round</span><select id="roundSelect"></select></label>
+          <label class="field"><span>Group</span><select id="groupSelect"></select></label>
+        </div>
+
+        <label class="toggle"><input id="streamModeToggle" type="checkbox"><span>Stream clean mode</span></label>
+        <div class="status-box" id="statusBox">Use Refresh API Lists or paste a tournament ID.</div>
+      </aside>
+
+      <main class="stage">
+        <section class="tournament-hero">
+          <div class="hero-copy">
+            <p id="tournamentKicker">Tournament</p>
+            <h2 id="tournamentTitle">No tournament loaded</h2>
+            <div class="meta-strip" id="metaStrip"></div>
+          </div>
+          <div class="hero-badge" id="heroBadge">Bracket</div>
+        </section>
+
+        <section class="view is-active" id="bracketView">
+          <div class="round-header">
+            <div><p id="roundKicker">Round</p><h3 id="roundTitle">Matchups</h3></div>
+            <div class="round-stats" id="roundStats"></div>
+          </div>
+          <div class="match-board" id="matchBoard"></div>
+        </section>
+
+        <section class="view" id="standingsView">
+          <div class="standings-layout">
+            <div><h3>Leaderboard</h3><div class="standings-table" id="standingsTable"></div></div>
+            <div><h3>Prize Payouts</h3><div class="payout-list" id="payoutList"></div></div>
+          </div>
+        </section>
+
+        <section class="view" id="hostView">
+          <div class="host-grid">
+            <div><h3>Talking Points</h3><div id="talkingPoints"></div></div>
+            <div><h3>Featured Match</h3><div id="featuredMatch"></div></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <button id="exitStreamModeButton" class="exit-stream-mode" type="button">Exit Stream Clean</button>
+    <script src="./data/tournaments.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
