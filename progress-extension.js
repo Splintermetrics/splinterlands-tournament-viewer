@@ -64,10 +64,11 @@
       || Number(match.player_2_wins || 0) >= targetWins(match.best_of);
   }
 
-  function playerSubmittedBattles(match, side) {
-    const key = side === 1 ? "player_1_submitted" : "player_2_submitted";
-    if (Number.isFinite(Number(match[key]))) return Number(match[key]);
-    if (isMatchComplete(match)) return matchExpectedBattles(match);
+  function matchCompletedBattles(match) {
+    const expected = matchExpectedBattles(match);
+    if (isMatchComplete(match)) return expected;
+    const completed = Number(match.completed_battles);
+    if (Number.isFinite(completed) && completed > 0 && completed < expected) return completed;
     return 0;
   }
 
@@ -89,19 +90,20 @@
     const matchPercent = matches.length ? Math.round((completeMatches / matches.length) * 100) : 0;
     const playerStats = new Map();
 
-    function addPlayer(name, submitted, expected) {
+    function addPlayer(name, completed, expected) {
       if (!name) return;
       const key = String(name);
-      const current = playerStats.get(key) || { player: key, submitted: 0, expected: 0 };
-      current.submitted += Math.min(Number(submitted || 0), Number(expected || 0));
+      const current = playerStats.get(key) || { player: key, completed: 0, expected: 0 };
+      current.completed += Math.min(Number(completed || 0), Number(expected || 0));
       current.expected += Number(expected || 0);
       playerStats.set(key, current);
     }
 
     for (const match of matches) {
       const expected = matchExpectedBattles(match);
-      addPlayer(match.player_1, playerSubmittedBattles(match, 1), expected);
-      addPlayer(match.player_2, playerSubmittedBattles(match, 2), expected);
+      const completed = matchCompletedBattles(match);
+      addPlayer(match.player_1, completed, expected);
+      addPlayer(match.player_2, completed, expected);
     }
 
     els.progressSummary.innerHTML = matches.length ? `
@@ -116,7 +118,7 @@
     ` : '<div class="status-box">No match data is available for this round yet.</div>';
 
     const rows = [...playerStats.values()]
-      .map((player) => ({ ...player, percent: player.expected ? Math.round((player.submitted / player.expected) * 100) : 0 }))
+      .map((player) => ({ ...player, percent: player.expected ? Math.round((player.completed / player.expected) * 100) : 0 }))
       .sort((a, b) => a.percent - b.percent || a.player.localeCompare(b.player));
 
     els.playerProgressList.innerHTML = rows.length ? rows.map((player) => `
@@ -124,7 +126,7 @@
         <strong class="${state.revealNames ? "" : "hidden-token"}">${esc(player.player)}</strong>
         <span>${esc(player.percent)}%</span>
         ${progressBar(player.percent, `${player.player} battle completion`)}
-        <small>${esc(player.submitted)} of ${esc(player.expected)} battle submissions</small>
+        <small>${esc(player.completed)} of ${esc(player.expected)} battles resolved</small>
       </div>
     `).join("") : '<div class="status-box">No player progress to show for this round.</div>';
   }
@@ -145,7 +147,7 @@
         tournament.matches.push(...matches.map((match) => {
           const battles = match.battles || [];
           const expectedBattles = Math.max(Number(match.best_of || 1), battles.length);
-          const completedBattles = battles.filter((battle) => Number(battle.status) === 2 || (battle.battle_queue_id_1 && battle.battle_queue_id_2)).length;
+          const completedBattles = battles.filter((battle) => Number(battle.status) === 2 || Boolean(battle.winner || battle.winner_player)).length;
           return {
             id: match.id,
             round: match.round,
