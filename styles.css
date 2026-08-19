@@ -494,6 +494,41 @@ button:focus-visible {
   text-transform: uppercase;
 }
 
+.progress-summary,
+.player-progress-list {
+  border-radius: 0 !important;
+  border-color: var(--line) !important;
+  background: rgba(12, 17, 24, 0.90) !important;
+}
+
+.overall-progress-card {
+  border-top: 2px solid rgba(255, 90, 31, 0.65) !important;
+}
+
+.progress-percent {
+  border-radius: 0 !important;
+  border-color: var(--ember) !important;
+  color: var(--gold) !important;
+  background: #080d12 !important;
+}
+
+.progress-bar {
+  border-color: var(--line) !important;
+  background: #080d12 !important;
+}
+
+.progress-bar span {
+  background: linear-gradient(90deg, var(--teal), var(--gold), var(--ember)) !important;
+}
+
+.player-progress-row {
+  border-bottom-color: rgba(32, 42, 53, 0.88) !important;
+}
+
+.player-progress-row span {
+  color: var(--gold) !important;
+}
+
 body.stream-clean .control-panel { display: none; }
 body.stream-clean .app-shell { display: block; }
 body.stream-clean .stage { padding: 32px; }
