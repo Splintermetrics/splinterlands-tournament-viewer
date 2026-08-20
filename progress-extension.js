@@ -2,22 +2,26 @@
   const progressStyle = document.createElement("style");
   progressStyle.textContent = `
     .segmented{grid-template-columns:repeat(4,1fr)}
-    .progress-layout{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(320px,.8fr);gap:16px}
-    .progress-layout h3{font-size:24px}
-    .progress-summary,.player-progress-list{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:rgba(21,25,29,.86)}
-    .overall-progress-card{display:grid;grid-template-columns:120px minmax(0,1fr);gap:18px;align-items:center;padding:18px}
-    .progress-percent{display:grid;place-items:center;min-height:96px;border:1px solid var(--gold);border-radius:8px;color:var(--gold);background:#101417;font-size:34px;font-weight:900}
-    .progress-label{margin-bottom:10px;font-size:18px;font-weight:800}
-    .progress-detail,.player-progress-row small{color:var(--muted)}
+    .progress-layout{display:grid;gap:16px}
+    .progress-layout h3{font-size:24px;text-transform:uppercase;letter-spacing:-.04em}
+    .progress-summary,.player-progress-grid{border:1px solid var(--line);background:rgba(12,17,24,.90)}
+    .overall-progress-card{display:grid;grid-template-columns:120px minmax(0,1fr);gap:18px;align-items:center;padding:18px;border-top:2px solid rgba(255,90,31,.65)}
+    .progress-percent{display:grid;place-items:center;min-height:96px;border:1px solid var(--ember);color:var(--gold);background:#080d12;font-size:34px;font-weight:900}
+    .progress-label{margin-bottom:10px;font-size:18px;font-weight:900}
+    .progress-detail,.player-progress-card small{color:var(--muted)}
     .progress-detail{margin-top:10px;line-height:1.45}
-    .progress-bar{width:100%;height:12px;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:#101417}
-    .progress-bar span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--teal),var(--gold))}
-    .player-progress-row{display:grid;grid-template-columns:minmax(0,1fr) 58px;gap:9px 12px;align-items:center;padding:13px 12px;border-bottom:1px solid rgba(46,56,64,.6)}
-    .player-progress-row:last-child{border-bottom:0}
-    .player-progress-row strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .player-progress-row span{justify-self:end;color:var(--gold);font-weight:900}
-    .player-progress-row .progress-bar,.player-progress-row small{grid-column:1/-1}
-    @media(max-width:920px){.progress-layout{grid-template-columns:1fr}.overall-progress-card{grid-template-columns:1fr}}
+    .progress-bar{width:100%;height:12px;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:#080d12}
+    .progress-bar span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--teal),var(--gold),var(--ember))}
+    .player-progress-section{display:grid;gap:10px}
+    .player-progress-head{display:flex;justify-content:space-between;align-items:end;gap:16px;flex-wrap:wrap}
+    .player-progress-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;border:0;background:transparent}
+    .player-progress-card{display:grid;gap:9px;min-height:118px;padding:13px 12px;border:1px solid var(--line);border-top:2px solid rgba(255,90,31,.65);background:rgba(12,17,24,.90);box-shadow:0 18px 42px var(--shadow)}
+    .player-progress-card strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:17px}
+    .player-progress-card span{justify-self:end;color:var(--gold);font-size:20px;font-weight:900}
+    .player-progress-card .player-progress-top{display:grid;grid-template-columns:minmax(0,1fr) 58px;gap:12px;align-items:center}
+    .player-progress-card.is-complete{border-color:rgba(118,242,164,.62);border-top-color:var(--green);background:linear-gradient(135deg,rgba(118,242,164,.09),rgba(12,17,24,.94) 38%)}
+    .player-progress-card.is-behind{border-top-color:var(--gold)}
+    @media(max-width:920px){.overall-progress-card{grid-template-columns:1fr}.player-progress-grid{grid-template-columns:1fr}}
   `;
   document.head.appendChild(progressStyle);
 
@@ -40,8 +44,17 @@
     bracketView.insertAdjacentHTML("afterend", `
       <section class="view" id="progressView">
         <div class="progress-layout">
-          <div><h3>Round Progress</h3><div class="progress-summary" id="progressSummary"></div></div>
-          <div><h3>Player Completion</h3><div class="player-progress-list" id="playerProgressList"></div></div>
+          <div>
+            <h3>Round Progress</h3>
+            <div class="progress-summary" id="progressSummary"></div>
+          </div>
+          <div class="player-progress-section">
+            <div class="player-progress-head">
+              <h3>Player Completion</h3>
+              <div class="round-stats" id="playerProgressStats"></div>
+            </div>
+            <div class="player-progress-grid" id="playerProgressList"></div>
+          </div>
         </div>
       </section>
     `);
@@ -49,6 +62,7 @@
 
   els.progressSummary = document.querySelector("#progressSummary");
   els.playerProgressList = document.querySelector("#playerProgressList");
+  els.playerProgressStats = document.querySelector("#playerProgressStats");
 
   function targetWins(bestOf) {
     return Math.floor(Number(bestOf || 1) / 2) + 1;
@@ -82,6 +96,7 @@
     if (!tournament) {
       els.progressSummary.innerHTML = '<div class="status-box">No tournament selected.</div>';
       els.playerProgressList.innerHTML = '<div class="status-box">No player progress to show.</div>';
+      if (els.playerProgressStats) els.playerProgressStats.innerHTML = "";
       return;
     }
 
@@ -121,13 +136,23 @@
       .map((player) => ({ ...player, percent: player.expected ? Math.round((player.completed / player.expected) * 100) : 0 }))
       .sort((a, b) => a.percent - b.percent || a.player.localeCompare(b.player));
 
+    if (els.playerProgressStats) {
+      els.playerProgressStats.innerHTML = [
+        `${rows.length} players`,
+        `${rows.filter((player) => player.percent >= 100).length} complete`,
+        `${rows.filter((player) => player.percent < 100).length} pending`,
+      ].map((item) => `<span class="pill">${esc(item)}</span>`).join("");
+    }
+
     els.playerProgressList.innerHTML = rows.length ? rows.map((player) => `
-      <div class="player-progress-row">
-        <strong class="${state.revealNames ? "" : "hidden-token"}">${esc(player.player)}</strong>
-        <span>${esc(player.percent)}%</span>
+      <article class="player-progress-card${player.percent >= 100 ? " is-complete" : " is-behind"}">
+        <div class="player-progress-top">
+          <strong class="${state.revealNames ? "" : "hidden-token"}">${esc(player.player)}</strong>
+          <span>${esc(player.percent)}%</span>
+        </div>
         ${progressBar(player.percent, `${player.player} battle completion`)}
         <small>${esc(player.completed)} of ${esc(player.expected)} battles resolved</small>
-      </div>
+      </article>
     `).join("") : '<div class="status-box">No player progress to show for this round.</div>';
   }
 
