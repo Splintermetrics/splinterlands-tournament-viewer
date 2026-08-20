@@ -2,6 +2,8 @@
   const isController = new URLSearchParams(window.location.search).get("controller") === "1";
   const channel = "BroadcastChannel" in window ? new BroadcastChannel("splinterlands-tournament-viewer") : null;
   const source = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const popoutControllerButton = els.popoutControllerButton || document.querySelector("#popoutControllerButton");
+  if (popoutControllerButton) els.popoutControllerButton = popoutControllerButton;
   let applyingRemote = false;
   let receivedRemote = false;
   let awaitingInitial = Boolean(isController && channel);
@@ -75,7 +77,7 @@
     publish();
   };
 
-  els.popoutControllerButton?.addEventListener("click", () => {
+  popoutControllerButton?.addEventListener("click", () => {
     const url = new URL(window.location.href);
     url.searchParams.set("controller", "1");
     window.open(url.toString(), "splinterlands-tournament-controller", "popup=yes,width=430,height=900");
