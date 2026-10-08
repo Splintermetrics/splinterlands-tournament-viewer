@@ -65,4 +65,57 @@ test("Linked pairs are not promoted into a single owner cluster", () => {
   const pairs=core.analyze(["alice","bob","charlie"],[a,b,c],[],new Set());
   assert.equal(pairs.length,2);assert.ok(!pairs.some(p=>p.id==="alice|charlie"));
 });
+
+const gameTx = (type, data, day = "02", key = "a", actors = ["alice"]) => [1, {
+  trx_id: key.repeat(40), op_in_trx: 0, timestamp: "2026-10-" + day + "T12:00:00",
+  op: ["custom_json", { id: "sm_" + type, json: JSON.stringify(data), required_auths: actors, required_posting_auths: [] }]
+}];
+test("Splinterboost is ignored by default", () => assert.ok(core.defaultServices.includes("splinterboost")));
+test("DEC and SPS transfers parse independently of HIVE transfers", () => {
+  const rows = [gameTx("token_transfer", {to:"bob",qty:15,token:"DEC"}), gameTx("token_transfer", {to:"bob",qty:2,token:"SPS"}, "03", "b")];
+  const ops = core.parseGameOperations(rows, Date.parse("2026-10-01"));
+  assert.equal(ops.length,2); assert.equal(ops[0].source,"splinterlands"); assert.equal(ops[1].amount,"2 SPS");
+});
+test("Malformed JSON, unsupported tokens, bridges and ambiguous actors are excluded", () => {
+  const rows = [gameTx("token_transfer",{to:"bob",qty:2,token:"CREDITS"}),gameTx("token_transfer",{to:"bob",qty:2,token:"DEC",type:"withdraw"}),gameTx("token_transfer",{to:"bob",qty:2,token:"DEC"},"03","b",["alice","charlie"])];
+  rows.push([1,{trx_id:"c".repeat(40),timestamp:"2026-10-02",op:["custom_json",{id:"sm_token_transfer",json:"{",required_auths:["alice"]}]}]);
+  assert.equal(core.parseGameOperations(rows,0).length,0);
+});
+test("Game transfers require a matching successful game receipt", () => {
+  const data={to:"bob",qty:2,token:"DEC"};
+  const op=core.parseGameOperations([gameTx("token_transfer",data)],0)[0];
+  const receipt={id:op.transaction,type:"token_transfer",player:"alice",data:JSON.stringify(data),success:true,error:null};
+  assert.equal(core.confirmGameOperation(op,receipt),"confirmed");
+  assert.equal(core.confirmGameOperation(op,{...receipt,success:false}),"rejected");
+  assert.equal(core.confirmGameOperation(op,{...receipt,player:"charlie"}),"unverified");
+  assert.equal(core.confirmGameOperation(op,{...receipt,data:JSON.stringify({...data,qty:3})}),"unverified");
+  assert.equal(core.confirmGameOperation(op,{...receipt,success:undefined}),"unverified");
+});
+test("Card gifts and delegations retain UID evidence", () => {
+  const rows=[gameTx("gift_cards",{to:"bob",cards:["C1","C2"]}),gameTx("delegate_cards",{to:"bob",cards:["C1"]},"03","b")];
+  const ops=core.parseGameOperations(rows,0);
+  assert.equal(ops.length,2);assert.deepEqual(ops[0].cards,["C1","C2"]);
+  const pair=core.analyze(["alice","bob"],[],ops,new Set())[0];
+  assert.equal(pair.evidence[0].type,"direct_cards");assert.match(pair.evidence[0].text,/recur/);
+});
+test("A single card loan is only context and Splinterboost connections are suppressed", () => {
+  const ops=core.parseGameOperations([gameTx("delegate_cards",{to:"bob",cards:["C1"]})],0);
+  assert.equal(core.cardEvidence("alice","bob",ops,new Set())[0].priority,1);
+  const fromBoost=ops.map(op=>({...op,from:"splinterboost"}));
+  assert.equal(core.cardEvidence("splinterboost","bob",fromBoost,new Set(core.defaultServices)).length,0);
+});
+test("Card receipts must match the full requested UID list", () => {
+  const data={to:"bob",cards:["C1","C2"]};
+  const op=core.parseGameOperations([gameTx("gift_cards",data)],0)[0];
+  const receipt={id:op.transaction+"-0",type:"sm_gift_cards",player:"alice",data,success:true};
+  assert.equal(core.confirmGameOperation(op,receipt),"confirmed");
+  assert.equal(core.confirmGameOperation(op,{...receipt,data:{to:"bob",cards:["C1"]}}),"unverified");
+});
+test("Hive and game transfer counts cannot combine into a recurring pattern", () => {
+  const game=core.parseGameOperations([gameTx("token_transfer",{to:"bob",qty:2,token:"DEC"})],0);
+  const hive=[transfer("alice","bob","03",1),transfer("alice","bob","04",2)];
+  const evidence=core.financialEvidence("alice","bob",[...game,...hive],new Set());
+  assert.equal(evidence.length,1);assert.equal(evidence[0].priority,1);
+});
+
 console.log(passed + " checks passed");
