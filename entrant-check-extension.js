@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const defaultServices = ["steemmonsters", "splinterlands", "hive-engine", "market", "peakmonsters", "bittrex", "binance", "blocktrades"];
+  const defaultServices = ["steemmonsters", "splinterlands", "hive-engine", "market", "peakmonsters", "splinterboost", "sl-hive", "sl-bsc", "sl-eth", "bittrex", "binance", "blocktrades"];
   const normalize = value => String(value || "").trim().replace(/^@/, "").toLowerCase();
   function entrants(tournament) {
     const roster = (tournament.players || []).map(p => normalize(typeof p === "string" ? p : p.player || p.name)).filter(Boolean);
@@ -56,26 +56,102 @@
     }
     return [...transfers.values()];
   }
+  const operationType = value => String(value || "").replace(/^sm_/, "");
+  function jsonObject(value) {
+    try { const parsed = typeof value === "string" ? JSON.parse(value) : value; return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null; }
+    catch { return null; }
+  }
+  function parseGameOperations(history, cutoff) {
+    const operations = new Map();
+    for (const [, item] of history) {
+      const timestamp = item.timestamp?.endsWith("Z") ? item.timestamp : item.timestamp + "Z";
+      if (!Number.isFinite(Date.parse(timestamp)) || Date.parse(timestamp) < cutoff) continue;
+      const op = Array.isArray(item.op) ? item.op : [String(item.op?.type || "").replace(/_operation$/, ""), item.op?.value];
+      if (op[0] !== "custom_json" || !op[1] || !/^[a-f0-9]{40}$/i.test(item.trx_id || "")) continue;
+      const type = operationType(op[1].id);
+      if (!["token_transfer", "gift_cards", "delegate_cards"].includes(type)) continue;
+      const actors = [...new Set([...(op[1].required_auths || []), ...(op[1].required_posting_auths || [])].map(normalize))];
+      const data = jsonObject(op[1].json);
+      if (actors.length !== 1 || !actors[0] || !data) continue;
+      const from = actors[0], to = normalize(data.to);
+      if (!/^[a-z][a-z0-9.-]{2,15}$/.test(to) || from === to) continue;
+      const id = item.trx_id + ":" + item.op_in_trx;
+      const base = { id, transaction: item.trx_id, from, to, timestamp, operation: type, source: "splinterlands" };
+      if (type === "token_transfer") {
+        if (!["DEC", "SPS"].includes(data.token) || !Number.isFinite(Number(data.qty)) || Number(data.qty) <= 0 ||
+          (data.type && data.type !== "transfer")) continue;
+        operations.set(id, { ...base, kind: "currency", token: data.token, quantity: Number(data.qty), amount: String(data.qty) + " " + data.token });
+      } else {
+        if (!Array.isArray(data.cards) || !data.cards.length || !data.cards.every(c => typeof c === "string" && c.length > 0)) continue;
+        const cards = [...new Set(data.cards)].sort();
+        operations.set(id, { ...base, kind: "card", cards, amount: cards.length + " card(s), " + (type === "gift_cards" ? "gift/transfer" : "delegation") });
+      }
+    }
+    return [...operations.values()];
+  }
+  function confirmGameOperation(operation, payload) {
+    const rows = Array.isArray(payload) ? payload : (payload?.type ? [payload] : (Array.isArray(payload?.data) ? payload.data : []));
+    for (const row of rows) {
+      const data = jsonObject(row.data);
+      if (!row.id || !new RegExp("^" + operation.transaction + "(?:-[0-9]+)?$").test(row.id) ||
+        operationType(row.type) !== operation.operation || normalize(row.player) !== operation.from ||
+        !data || normalize(data.to) !== operation.to) continue;
+      if (operation.kind === "currency" && (data.token !== operation.token || Number(data.qty) !== operation.quantity || (data.type && data.type !== "transfer"))) continue;
+      if (operation.kind === "card" && (!Array.isArray(data.cards) || JSON.stringify([...new Set(data.cards)].sort()) !== JSON.stringify(operation.cards))) continue;
+      if (row.success === false) return "rejected";
+      if (row.success === true && !row.error) return "confirmed";
+    }
+    return "unverified";
+  }
+  function cardEvidence(a, b, operations, ignored) {
+    const evidence = [];
+    const cards = operations.filter(tx => tx.kind === "card" && !ignored.has(tx.from) && !ignored.has(tx.to));
+    const direct = cards.filter(tx => (tx.from === a && tx.to === b) || (tx.from === b && tx.to === a));
+    if (direct.length) {
+      const reused = [...new Set(direct.flatMap(tx => tx.cards))].filter(uid => direct.filter(tx => tx.cards.includes(uid)).length > 1);
+      evidence.push({ type: "direct_cards", priority: recurring(direct) || reused.length ? 2 : 1, relevance: 2,
+        text: direct.length + " confirmed card gift/transfer or delegation operation(s) between entrants." +
+          (reused.length ? " " + reused.length + " card UID(s) recur across operations." : "") +
+          " Lending is a possible explanation.", transactions: direct });
+    }
+    const donors = [...new Set(cards.filter(tx => tx.to === a).map(tx => tx.from))];
+    for (const donor of donors) {
+      if ([a, b].includes(donor)) continue;
+      const left = cards.filter(tx => tx.from === donor && tx.to === a);
+      const right = cards.filter(tx => tx.from === donor && tx.to === b);
+      if (recurring(left) && recurring(right)) evidence.push({ type: "shared_card_donor", priority: 1, relevance: 2,
+        text: "Both repeatedly receive card gifts/delegations from " + donor + ". A guild lender or scholarship may explain this.", transactions: [...left, ...right] });
+    }
+    return evidence;
+  }
   function recurring(items) {
     return items.length >= 3 && new Set(items.map(x => x.timestamp.slice(0, 10))).size >= 2;
   }
   function financialEvidence(a, b, transfers, ignored) {
     const evidence = [];
-    const direct = transfers.filter(t => !ignored.has(t.from) && !ignored.has(t.to) &&
-      ((t.from === a && t.to === b) || (t.from === b && t.to === a)));
-    if (recurring(direct)) evidence.push({ type: "direct_transfers", priority: 2,
-      text: direct.length + " HIVE/HBD transfers between these entrants across multiple days.", transactions: direct });
-    for (const direction of ["from", "to"]) {
-      const other = direction === "from" ? "to" : "from";
-      const left = transfers.filter(t => t[direction] === a && !ignored.has(t[other]) && ![a, b].includes(t[other]));
-      const right = transfers.filter(t => t[direction] === b && !ignored.has(t[other]) && ![a, b].includes(t[other]));
-      for (const name of new Set(left.map(t => t[other]))) {
-        const l = left.filter(t => t[other] === name);
-        const r = right.filter(t => t[other] === name);
-        if (recurring(l) && recurring(r)) evidence.push({ type: direction === "from" ? "common_recipient" : "common_funder", priority: 2,
-          text: direction === "from" ? "Both repeatedly send HIVE/HBD to " + name + " (" + l.length + " / " + r.length + " transfers)." :
-            "Both repeatedly receive HIVE/HBD from " + name + " (" + l.length + " / " + r.length + " transfers).",
-          transactions: [...l, ...r] });
+    for (const source of ["splinterlands", "hive"]) {
+      const relevant = transfers.filter(tx => tx.kind !== "card" && (tx.source || "hive") === source && !ignored.has(tx.from) && !ignored.has(tx.to));
+      const label = source === "splinterlands" ? "Splinterlands DEC/SPS" : "HIVE/HBD";
+      const relevance = source === "splinterlands" ? 2 : 1;
+      const direct = relevant.filter(t => (t.from === a && t.to === b) || (t.from === b && t.to === a));
+      if (recurring(direct) || (source === "splinterlands" && direct.length)) evidence.push({
+        type: source === "splinterlands" ? "game_direct_transfers" : "direct_transfers",
+        priority: recurring(direct) ? 2 : 1, relevance,
+        text: direct.length + " " + label + " transfers between these entrants" + (recurring(direct) ? " across multiple days." : " (limited connection)."),
+        transactions: direct
+      });
+      for (const direction of ["from", "to"]) {
+        const other = direction === "from" ? "to" : "from";
+        const left = relevant.filter(t => t[direction] === a && ![a, b].includes(t[other]));
+        const right = relevant.filter(t => t[direction] === b && ![a, b].includes(t[other]));
+        for (const name of new Set(left.map(t => t[other]))) {
+          const l = left.filter(t => t[other] === name);
+          const r = right.filter(t => t[other] === name);
+          if (recurring(l) && recurring(r)) evidence.push({ type: (source === "hive" ? "" : "game_") + (direction === "from" ? "common_recipient" : "common_funder"), priority: 2, relevance,
+            text: direction === "from" ? "Both repeatedly send " + label + " to " + name + " (" + l.length + " / " + r.length + " transfers)." :
+              "Both repeatedly receive " + label + " from " + name + " (" + l.length + " / " + r.length + " transfers).",
+            transactions: [...l, ...r] });
+        }
       }
     }
     return evidence;
@@ -90,15 +166,17 @@
     }
     for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
       const a = names[i], b = names[j];
+      const relevant = [...new Map([...(byParticipant.get(a) || []), ...(byParticipant.get(b) || [])].map(tx => [tx.id, tx])).values()];
       const evidence = [
         ...(byName.has(a) && byName.has(b) ? authorityEvidence(byName.get(a), byName.get(b), ignored) : []),
-        ...financialEvidence(a, b, [...new Map([...(byParticipant.get(a) || []), ...(byParticipant.get(b) || [])].map(tx => [tx.id, tx])).values()], ignored)
+        ...financialEvidence(a, b, relevant, ignored),
+        ...cardEvidence(a, b, relevant, ignored)
       ];
-      if (evidence.length) findings.push({ id: a + "|" + b, players: [a, b], priority: Math.max(...evidence.map(e => e.priority)), evidence });
+      if (evidence.length) findings.push({ id: a + "|" + b, players: [a, b], priority: Math.max(...evidence.map(e => e.priority)), relevance: Math.max(...evidence.map(e => e.relevance || 0)), evidence });
     }
-    return findings.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
+    return findings.sort((a, b) => b.priority - a.priority || b.relevance - a.relevance || a.id.localeCompare(b.id));
   }
-  const core = { entrants, authorityEvidence, parseTransfers, financialEvidence, analyze, normalize };
+  const core = { entrants, authorityEvidence, parseTransfers, parseGameOperations, confirmGameOperation, cardEvidence, financialEvidence, analyze, normalize, defaultServices };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof document === "undefined") return;
 
@@ -137,11 +215,11 @@
   dialog.setAttribute("aria-labelledby", "entrantCheckTitle");
   dialog.innerHTML = '<div class="entrant-head"><h2 id="entrantCheckTitle">Entrant Check</h2><button class="entrant-close" type="button" aria-label="Close entrant check" title="Close">&times;</button></div>' +
     '<p class="entrant-title" id="entrantTournament"></p><div class="entrant-settings">' +
-    '<label class="field"><span>Scan</span><select id="entrantScanMode"><option value="quick">Authorities only</option><option value="deep">Authorities + HIVE/HBD transfers</option></select></label>' +
+    '<label class="field"><span>Scan</span><select id="entrantScanMode"><option value="quick">Authorities only</option><option value="deep" selected>Authorities + currencies + cards</option></select></label>' +
     '<label class="field"><span>History window</span><select id="entrantDays"><option value="30">30 days</option><option value="90" selected>90 days</option></select></label>' +
     '<label class="field entrant-wide"><span>Ignore service accounts (comma separated)</span><textarea id="entrantIgnored" spellcheck="false"></textarea></label></div>' +
     '<div class="entrant-actions"><button type="button" id="entrantRun">Check Entrants</button><button type="button" id="entrantCancel" disabled>Cancel Scan</button><button type="button" id="entrantExport" disabled>Export Report</button></div>' +
-    '<p class="entrant-summary">Connections need host review; they do not prove shared ownership. Financial checks cover HIVE/HBD only. DEC/SPS and card movements are not included.</p>' +
+    '<p class="entrant-summary">Connections need host review; they do not prove shared ownership. Scan includes public DEC/SPS transfer and card gift/delegation operations, plus HIVE/HBD transfers. Game operations must be confirmed by Splinterlands. Market trades and automated rental payments are excluded.</p>' +
     '<p class="entrant-summary" id="entrantScanStatus" role="status" aria-live="polite"></p><div class="entrant-list" id="entrantResults"></div>';
   // Review data lives only in this window, never in the broadcast state.
   if (isController) document.body.appendChild(dialog);
@@ -170,9 +248,10 @@
     const missing = report.names.filter(n => !report.accounts.includes(n));
     const incomplete = report.coverage.filter(c => !c.complete);
     const changed = Boolean(t.players?.length) && JSON.stringify(entrants(t)) !== JSON.stringify(report.names);
-    const coverageText = report.mode === "deep" ? " " + report.coverage.filter(c => c.complete).length + "/" + report.names.length + " financial histories cover the requested window." : " Financial history not checked.";
+    const coverageText = report.mode === "deep" ? " " + report.coverage.filter(c => c.complete).length + "/" + report.names.length + " public histories cover the requested window. Incoming game activity from unscanned senders is not covered." : " Financial history not checked.";
     if (!running) progress = "Checked " + new Date(report.checkedAt).toLocaleString() + ". " +
       report.accounts.length + "/" + report.names.length + " authorities available." + coverageText +
+      (report.gameChecks ? " Game operations: " + report.gameChecks.confirmed + " confirmed, " + report.gameChecks.rejected + " rejected, " + report.gameChecks.unverified + " unverified/not checked." : "") +
       (report.rosterIncomplete ? " Entrant roster may be incomplete." : "") +
       (changed ? " Entrants changed since this check; run again." : "") +
       (report.cancelled ? " Scan cancelled; results are partial." : "") +
@@ -188,7 +267,7 @@
         pair.evidence.map(e => '<li>' + esc(e.text) + (e.key ? ' <code>' + esc(e.key) + '</code>' : "") +
           (e.transactions ? '<details><summary>Transactions (' + e.transactions.length + ')</summary>' +
             e.transactions.map(tx => '<p><a target="_blank" rel="noopener noreferrer" href="https://hiveblocks.com/tx/' + encodeURIComponent(tx.transaction) + '">' +
-              esc(tx.timestamp.slice(0, 10) + " " + tx.from + " -> " + tx.to + " " + tx.amount) + '</a></p>').join("") + '</details>' : "") + '</li>').join("") +
+              esc(tx.timestamp.slice(0, 10) + " " + tx.from + " -> " + tx.to + " " + tx.amount) + '</a>' + (tx.cards ? '<br><code>' + esc(tx.cards.join(", ")) + '</code>' : "") + '</p>').join("") + '</details>' : "") + '</li>').join("") +
         '</ul><div class="entrant-review"><label class="field"><span>Host decision</span><select data-review="status">' +
         reviewStates.map(s => '<option' + ((saved.status || reviewStates[0]) === s ? " selected" : "") + '>' + s + '</option>').join("") +
         '</select></label><label class="field"><span>Review notes</span><textarea data-review="note" maxlength="4000">' + esc(saved.note || "") + '</textarea></label></div></article>';
@@ -245,7 +324,8 @@
       mode: ui("entrantScanMode").value, days: Number(ui("entrantDays").value),
       ignored: [...new Set(ui("entrantIgnored").value.split(/[,\s]+/).map(normalize).filter(Boolean))],
       names: entrants(t), accounts: [], authorityErrors: [], coverage: [], findings: [], rosterIncomplete: true };
-    const accounts = [], transfers = new Map();
+    const accounts = [], transfers = new Map(), gameCandidates = new Map();
+    if (report.mode === "deep") report.gameChecks = { confirmed: 0, rejected: 0, unverified: 0 };
     progress = "Loading the full entrant roster...";
     renderReport();
     try {
@@ -277,11 +357,44 @@
             const result = await history(name, cutoff, controller.signal);
             report.coverage.push({ name, complete: result.complete, reason: result.reason || "" });
             for (const tx of parseTransfers(result.rows, cutoff)) transfers.set(tx.id, tx);
+            for (const operation of parseGameOperations(result.rows, cutoff)) {
+              if (!report.ignored.includes(operation.from) && !report.ignored.includes(operation.to)) gameCandidates.set(operation.id, operation);
+            }
           } catch (error) {
             if (controller.signal.aborted) throw error;
             report.coverage.push({ name, complete: false, reason: "history unavailable: " + error.message });
           }
         }
+        const candidates = [...gameCandidates.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+        const selected = candidates.slice(0, 300);
+        report.gameChecks.unverified = candidates.length;
+        let cursor = 0, checked = 0;
+        async function worker() {
+          while (cursor < selected.length && !controller.signal.aborted) {
+            const operation = selected[cursor++];
+            let result = "unverified";
+            for (const base of [apiBase, "https://api.splinterlands.com"]) {
+              if (controller.signal.aborted) break;
+              const request = new AbortController();
+              const abort = () => request.abort();
+              controller.signal.addEventListener("abort", abort, { once: true });
+              const timeout = setTimeout(abort, 15000);
+              try {
+                const response = await fetch(base + "/transactions/lookup?trx_id=" + encodeURIComponent(operation.transaction), { signal: request.signal });
+                if (response.ok) result = confirmGameOperation(operation, await response.json());
+                if (result !== "unverified") break;
+              } catch { /* Leave unavailable or mismatched game results unverified. */ }
+              finally { clearTimeout(timeout); controller.signal.removeEventListener("abort", abort); }
+            }
+            if (result === "confirmed") { transfers.set(operation.id, operation); report.gameChecks.confirmed++; report.gameChecks.unverified--; }
+            if (result === "rejected") { report.gameChecks.rejected++; report.gameChecks.unverified--; }
+            checked++;
+            progress = "Confirming Splinterlands operations: " + checked + "/" + selected.length + (candidates.length > 300 ? " (300-operation confirmation limit)" : "");
+            scanStatus();
+          }
+        }
+        await Promise.allSettled([worker(), worker(), worker()]);
+        if (controller.signal.aborted) throw new DOMException("Cancelled", "AbortError");
       }
     } catch (error) {
       report.cancelled = controller.signal.aborted;
@@ -293,6 +406,7 @@
       if (report.mode === "deep") for (const name of report.names) {
         if (!report.coverage.some(c => c.name === name)) report.coverage.push({ name, complete: false, reason: "not scanned" });
       }
+      if (report.gameChecks) report.gameChecks.unverified = gameCandidates.size - report.gameChecks.confirmed - report.gameChecks.rejected;
       report.findings = analyze(report.names, accounts, [...transfers.values()], new Set(report.ignored));
       reports.set(t.id, report);
       running = null;
