@@ -28,9 +28,13 @@ To deploy:
 Use **Entrant Check** to open the review dialog in the pop-out controls window. The broadcast window never receives review findings or notes.
 
 - **Authorities only** compares entrants' public Hive owner, active and posting authorities. It records signature thresholds and distinguishes posting connections from stronger control connections.
-- **Authorities + HIVE/HBD transfers** adds a 30- or 90-day history scan. Repeated transfers require at least three operations across two different UTC dates. Shared funding and shared recipients are shown separately.
+- **Authorities + currencies + cards** adds a 30- or 90-day public-history scan. Repeated transfers require at least three operations across two different UTC dates. Shared funding and shared recipients are shown separately.
 - Edit **Ignore service accounts** to exclude known exchanges, sponsors, guild treasuries and other shared services. The default list is a starting point, not an exhaustive service directory.
-- Financial checks cover HIVE/HBD transfers only. DEC, SPS, card transfers and delegations are not checked in this version.
+- Currency evidence separates in-game DEC/SPS transfers from HIVE/HBD transfers. Card evidence includes direct gifts/transfers and delegations with the individual card UIDs. Game asset connections are listed ahead of equally ranked Hive-only connections.
+- Splinterlands operations are decoded from public Hive custom JSONs (`token_transfer`, `gift_cards`, `delegate_cards`, with or without the `sm_` prefix). Only requests with matching successful Splinterlands transaction receipts become evidence. Failed operations are excluded; unavailable/mismatched receipts remain unverified.
+- The default service exclusions include `splinterboost` and common bridge accounts. Withdrawals to external chains, market trades and automated rental payments are not treated as direct in-game asset connections.
+- Game history is based on operations signed by scanned entrants. Incoming activity from senders outside that roster, and delegations established before the selected history window, are not comprehensively covered. A shared card donor is supporting context, not an ownership finding.
+- At most 300 newest relevant game operations per tournament are confirmed, with three concurrent read-only lookups. Operations beyond this bound remain explicitly unverified. Game receipts may also be unavailable for older operations.
 - Each account history is bounded to five pages of up to 1,000 operations. Missing accounts, API failures, cancellation and truncated history are reported as incomplete.
 - Connections are evidence for host review, not proof of ownership. No connections found does not establish separate ownership; connected pairs are never automatically grouped as one owner.
 - Host decisions and notes are saved in this browser's local storage. Scan results remain in memory until the controls window reloads. **Export Report** downloads the findings, coverage and review notes as JSON.
