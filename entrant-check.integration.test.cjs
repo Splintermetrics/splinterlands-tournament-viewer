@@ -99,6 +99,55 @@ async function run() {
   resultNode.events.input({target:input});
   assert.match(host.storage["phoenix-entrant-reviews-v1"],/Owner confirmed by host/);
   console.log("PASS Review notes are saved locally");
-  console.log("6 integration checks passed");
+
+  const gameRows = [
+    ["token_transfer",{to:"bob",qty:25,token:"DEC"},"a","confirmed"],
+    ["token_transfer",{to:"bob",qty:2,token:"SPS"},"b","confirmed"],
+    ["gift_cards",{to:"bob",cards:["C1","C2"]},"c","confirmed"],
+    ["delegate_cards",{to:"bob",cards:["C3"]},"d","rejected"],
+    ["delegate_cards",{to:"bob",cards:["C4"]},"e","unverified"]
+  ];
+  const game=fixture(true,async(url,options)=>{
+    if(url.includes("tournaments/find")) return response({players:["alice","bob"],num_players:2});
+    if(url.includes("transactions/lookup")) {
+      const id=url.split("trx_id=")[1];
+      const row=gameRows.find(([, , key])=>key.repeat(40)===id);
+      if(row[3]==="unverified") return response({});
+      return response({id,type:row[0],player:"alice",data:JSON.stringify(row[1]),success:row[3]==="confirmed"});
+    }
+    const request=JSON.parse(options.body);
+    if(request.method.endsWith("get_accounts")) return response({result:[auth("alice","A"),auth("bob","B")]});
+    if(request.params[0]==="bob") return response({result:[]});
+    return response({result:gameRows.map(([type,data,key],index)=>[index,{
+      trx_id:key.repeat(40),op_in_trx:0,timestamp:new Date(Date.now()-index*86400000).toISOString().replace("Z",""),
+      op:["custom_json",{id:"sm_"+type,required_auths:["alice"],required_posting_auths:[],json:JSON.stringify(data)}]
+    }])});
+  });
+  game.dialog.querySelector("#entrantScanMode").value="deep";
+  await game.dialog.querySelector("#entrantRun").events.click();
+  const gameStatus=game.dialog.querySelector("#entrantScanStatus").textContent;
+  const gameHtml=game.dialog.querySelector("#entrantResults").innerHTML;
+  assert.match(gameStatus,/3 confirmed, 1 rejected, 1 unverified/);
+  assert.match(gameHtml,/Splinterlands DEC\/SPS/);
+  assert.match(gameHtml,/card gift\/transfer/);
+  assert.match(gameHtml,/C1, C2/);
+  assert.ok(!gameHtml.includes("C3")&&!gameHtml.includes("C4"));
+  console.log("PASS Game receipts confirm DEC/SPS and cards; rejected and unverified requests never become findings");
+
+  let ignoredLookups=0;
+  const boost=fixture(true,async(url,options)=>{
+    if(url.includes("tournaments/find")) return response({players:["alice","bob"],num_players:2});
+    if(url.includes("transactions/lookup")) { ignoredLookups++;return response({}); }
+    const request=JSON.parse(options.body);
+    if(request.method.endsWith("get_accounts")) return response({result:[auth("alice","A"),auth("bob","B")]});
+    return response({result:[[0,{trx_id:"f".repeat(40),op_in_trx:0,timestamp:new Date().toISOString().replace("Z",""),
+      op:["custom_json",{id:"sm_token_transfer",required_auths:["alice"],json:JSON.stringify({to:"splinterboost",token:"DEC",qty:1})}]}]]});
+  });
+  boost.dialog.querySelector("#entrantScanMode").value="deep";
+  await boost.dialog.querySelector("#entrantRun").events.click();
+  assert.equal(ignoredLookups,0);
+  assert.match(boost.dialog.querySelector("#entrantResults").innerHTML,/No connections found/);
+  console.log("PASS Splinterboost operations are excluded before confirmation");
+  console.log("8 integration checks passed");
 }
 run().catch(error=>{ console.error(error); process.exitCode=1; });
